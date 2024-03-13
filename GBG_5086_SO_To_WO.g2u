@@ -1,0 +1,203 @@
+Program.Sub.ScreenSU.Start
+Gui.F_SalesOrder..Create
+Gui.F_SalesOrder..Caption("Request Sales Order")
+Gui.F_SalesOrder..Size(3585,2055)
+Gui.F_SalesOrder..MinX(0)
+Gui.F_SalesOrder..MinY(0)
+Gui.F_SalesOrder..Position(0,0)
+Gui.F_SalesOrder..BackColor(-2147483633)
+Gui.F_SalesOrder..MaxButton(False)
+Gui.F_SalesOrder..MinButton(False)
+Gui.F_SalesOrder..MousePointer(0)
+Gui.F_SalesOrder..Event(UnLoad,Unload)
+Gui.F_SalesOrder.txtSalesOrder.Create(TextBox,"",True,1860,300,0,480,570,True,0,"Arial",8,-2147483643,1)
+Gui.F_SalesOrder.lbl1.Create(Label,"Sales Order",True,1095,255,0,480,360,True,0,"Arial",8,-2147483633,0)
+Gui.F_SalesOrder.cmdSearch.Create(Button)
+Gui.F_SalesOrder.cmdSearch.Size(465,375)
+Gui.F_SalesOrder.cmdSearch.Position(2445,525)
+Gui.F_SalesOrder.cmdSearch.Caption("^")
+Gui.F_SalesOrder.cmdSearch.Event(Click,cmdSearch_Click)
+Gui.F_SalesOrder.cmdOk.Create(Button)
+Gui.F_SalesOrder.cmdOk.Size(855,375)
+Gui.F_SalesOrder.cmdOk.Position(690,990)
+Gui.F_SalesOrder.cmdOk.Caption("Ok")
+Gui.F_SalesOrder.cmdOk.Event(Click,cmdOk_Click)
+Gui.F_SalesOrder.cmdExit.Create(Button)
+Gui.F_SalesOrder.cmdExit.Size(855,375)
+Gui.F_SalesOrder.cmdExit.Position(1770,990)
+Gui.F_SalesOrder.cmdExit.Caption("Exit")
+Gui.F_SalesOrder.cmdExit.Event(Click,cmdExit_Click)
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+Program.External.Include.Library("6017.lib")
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.Try
+	
+	'Show screen
+	F.ODBC.Connection!con.OpenConnection(V.Ambient.pDSN,V.Ambient.pUser,V.Ambient.pPass)
+	Gui.F_SalesOrder..Show
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(errorhandler, "Sub", V.Ambient.CurrentSubroutine, "ErrNo", V.Ambient.ErrorNumber, "ErrDesc", V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.LoadOrder.Start
+F.Intrinsic.Control.Try
+	V.Local.sSQL.Declare(String)
+	V.Local.sOrder.Declare(String)
+	V.Local.sErrMessage.Declare(String)
+	V.Local.sRouterDesc.Declare(String)
+	V.Local.sParameters.Declare(String)
+	
+	F.Intrinsic.UI.InvokeWaitDialog("Creating Job Header Record.")
+	V.Local.sOrder.Set(V.Screen.F_SalesOrder!txtSalesOrder.Text)
+	F.Intrinsic.String.Build("SELECT * FROM V_ORDER_LINES WHERE ORDER_NO = '{0}' AND FLAG_SO_TO_WO <> 'Y' ORDER BY RECORD_NO",V.Local.sOrder,V.Local.sSQL)
+	
+	F.Data.DataTable.CreateFromSQL("OrderLines","con",V.Local.sSQL,True)
+	'If no lines found close program
+	F.Intrinsic.Control.If(V.DataTable.OrderLines.RowCount,=,0)
+		F.Data.DataTable.Close("OrderLines")
+		F.Intrinsic.String.Build("No lines found with out work orders for sales order: {0}",V.Local.sOrder,V.Local.sErrMessage)
+		F.Intrinsic.UI.Msgbox(V.Local.sErrMessage)
+		F.Intrinsic.UI.CloseWaitDialog
+		F.Intrinsic.Control.ExitSub
+	F.Intrinsic.Control.EndIf
+	
+	F.Data.DataTable.Close("OrderLines")
+	
+	'V.Global.s6017Mode.Set("NS")
+	F.Data.DataTable.AddRow("6017")
+	F.Data.DataTable.SetValue("6017",0,"WO",V.Local.sOrder.Right6,"WOSuffix","000","RunQty",1.0)
+'	Gui.F_RtrBuild.txtOrder_No.Text(V.Local.sOrder)
+	
+	'Get customer information based on order
+	F.Intrinsic.String.Build("SELECT CUSTOMER, CUSTOMER_PO, SALESPERSON,DATE_ORDER,DATE_DUE FROM ORDER_HEADER WHERE ORDER_NO = '{0}' AND RECORD_TYPE = 'A'",V.Local.sOrder,V.Local.sSQL)
+	F.ODBC.Connection!con.OpenLocalRecordsetRO("rstOrder",V.Local.sSQL)
+	
+	'If we get a record set screen values, otherwise close program
+	F.Intrinsic.Control.If(V.ODBC.con!rstOrder.EOF,<>,True)
+		F.Data.DataTable.SetValue("6017",0,"PONum",V.ODBC.con!rstOrder.FieldValTrim!CUSTOMER_PO,"CustNum",V.ODBC.con!rstOrder.FieldValTrim!CUSTOMER,"Salesman",V.ODBC.con!rstOrder.FieldValTrim!SALESPERSON,"DateOpened",V.ODBC.con!rstOrder.FieldValTrim!DATE_ORDER,"DueDate",V.ODBC.con!rstOrder.FieldValTrim!DATE_DUE)
+	F.Intrinsic.Control.Else
+		F.ODBC.con!rstOrder.Close
+		F.Intrinsic.String.Build("No info for Order No: {0}",V.Local.sOrder,V.Local.sErrMessage)
+		F.Intrinsic.UI.Msgbox(V.Local.sErrMessage)
+		F.Intrinsic.Control.CallSub(Unload)
+	F.Intrinsic.Control.EndIf
+	
+	F.ODBC.con!rstOrder.Close
+	
+	F.Intrinsic.Control.CallSub(6017Sync)
+	
+	F.Intrinsic.UI.ChangeWaitStatus("Updating Router and Part Description.")
+	
+	'Set the Router and Part Description
+	F.Intrinsic.String.Build("FROM SALES ORDER: {0}",V.Local.sOrder,V.Local.sRouterDesc)
+	F.Intrinsic.String.Build("UPDATE JOB_HEADER SET DESCRIPTION = '{0}', PART_DESCRIPTION = '{0}', SALES_ORDER = '{1}', SALES_ORDER_LINE = '000' WHERE JOB = '{2}' AND SUFFIX = '000'",V.Local.sRouterDesc,V.Local.sOrder,V.Local.sOrder.Right6,V.Local.sSQL)
+	F.ODBC.Connection!con.Execute(V.Local.sSQL)
+	
+	F.Intrinsic.UI.ChangeWaitStatus("Updating Sales Order To Work Order Flag.")
+	'Update the SO To WO Flag so it won't be re-created in the future
+	F.Intrinsic.String.Build("UPDATE ORDER_LINES SET FLAG_SO_TO_WO = 'Y', JOB = '{1}', SUFFIX = '000', USER_5 = '{1}-000' WHERE ORDER_NO = '{0}' AND RECORD_TYPE = 'L'",V.Local.sOrder,V.Local.sOrder.Right6,V.Local.sSQL)
+	F.ODBC.Connection!con.Execute(V.Local.sSQL)
+	
+	F.Intrinsic.UI.ChangeWaitStatus("Launching WO Screen - Open")
+	'Launch the Work Order Edit Screen
+	F.Intrinsic.String.ConcatCallWrapperArgs(V.Local.sOrder.Right6,"000","O",V.Local.sParameters)
+	F.Global.General.CallWrapperSync(2007,V.Local.sParameters)
+	
+	F.Intrinsic.Control.CallSub(Unload)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(errorhandler, "Sub", V.Ambient.CurrentSubroutine, "ErrNo", V.Ambient.ErrorNumber, "ErrDesc", V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.LoadOrder.End
+
+Program.Sub.cmdSearch_Click.Start
+F.Intrinsic.Control.Try
+	V.Local.sColumns.Declare(String)
+	V.Local.iWidths.Declare(Long)
+	V.Local.sRet.Declare(String)
+	V.Local.sSQL.Declare(String)
+	V.Local.sTemp.Declare(String)
+
+	'This is stupid. But it has to be done. The function is expecting this array if you're going to resize the browser whether it's got data or not. Can't just pass an empty string.
+	V.Local.sTemp.Redim(0,6)
+	
+	F.Intrinsic.String.Split("Order #*!*Cust #*!*Customer Name*!*Purchase Order*!*Address 1*!*City*!*Zip","*!*",V.Local.sColumns)
+	F.Intrinsic.String.Split("1000*!*1000*!*2300*!*1000*!*2400*!*1500*!*600","*!*",V.Local.iWidths)
+	
+	'Most of the columns are just informational
+	V.Local.sSQL.Set("SELECT OH.ORDER_NO,OH.CUSTOMER,CM.NAME_CUSTOMER,OH.CUSTOMER_PO,CM.ADDRESS1,CM.CITY,CM.ZIP FROM V_ORDER_HEADER OH LEFT JOIN V_CUSTOMER_MASTER CM ON OH.CUSTOMER = CM.CUSTOMER ORDER BY OH.ORDER_NO")
+	
+	F.Intrinsic.UI.Browser("Select Order","con",V.Local.sSQL,V.Local.sColumns,V.Local.iWidths,20000,10000,V.Local.sTemp,V.Local.sTemp,V.Local.sRet)
+	
+	F.Intrinsic.Control.If(V.Local.sRet,<>,"***CANCEL***")
+		F.Intrinsic.String.Split(V.Local.sRet,"*!*",V.Local.sRet)
+		Gui.F_SalesOrder.txtSalesOrder.Text(V.Local.sRet(0))
+	F.Intrinsic.Control.EndIf	
+	
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(errorhandler, "Sub", V.Ambient.CurrentSubroutine, "ErrNo", V.Ambient.ErrorNumber, "ErrDesc", V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.cmdSearch_Click.End
+
+Program.Sub.cmdOk_Click.Start
+F.Intrinsic.Control.Try
+	V.Local.sSQL.Declare(String)
+	
+	'Just need to make sure that a Sales Order is entered. After that it's just about loading the order and formatting the grid.
+	F.Intrinsic.Control.If(V.Screen.F_SalesOrder!txtSalesOrder.Text,=,"")
+		F.Intrinsic.UI.Msgbox("Please select a Sales Order")
+		F.Intrinsic.Control.ExitSub
+	F.Intrinsic.Control.EndIf
+	
+	F.Intrinsic.Control.CallSub(LoadOrder)
+		
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(errorhandler, "Sub", V.Ambient.CurrentSubroutine, "ErrNo", V.Ambient.ErrorNumber, "ErrDesc", V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.cmdOk_Click.End
+
+Program.Sub.cmdExit_Click.Start
+F.Intrinsic.Control.Try
+	
+	F.Intrinsic.Control.CallSub(Unload)
+	
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(errorhandler, "Sub", V.Ambient.CurrentSubroutine, "ErrNo", V.Ambient.ErrorNumber, "ErrDesc", V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.cmdExit_Click.End
+
+Program.Sub.Unload.Start
+F.Intrinsic.Control.Try
+	V.Local.sError.Declare(String)
+	
+	F.ODBC.Connection!con.Close
+	F.Intrinsic.Control.End
+	
+F.Intrinsic.Control.Catch
+	Function.Intrinsic.String.Build("Project: GBG_5086_SO_To_WO.g2u{0}{0}Subroutine: {1}{0}Error Occurred {2} with description {3}",V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.Unload.End
+
+Program.Sub.errorhandler.Start
+F.Intrinsic.Control.Try
+	V.Local.sError.Declare(String)
+	
+	'Show error, close pervasive connection, and end program
+	Function.Intrinsic.String.Build("Project: GBG_5086_SO_To_WO.g2u{0}{0}Subroutine: {1}{0}Error Occurred {2} with description {3}",V.Ambient.Newline,V.Args.Sub,V.Args.ErrNo,V.Args.ErrDesc,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.CallSub(Unload)
+	
+F.Intrinsic.Control.Catch
+	Function.Intrinsic.String.Build("Project: GBG_5086_SO_To_WO.g2u{0}{0}Subroutine: {1}{0}Error Occurred {2} with description {3}",V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.CallSub(Unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.errorhandler.End
